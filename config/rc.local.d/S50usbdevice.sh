@@ -53,7 +53,7 @@ echo "0x0018" > ${USB_CONFIGFS_DIR}/idProduct
 syslink_function ffs.adb
 mkdir /dev/usb-ffs/adb -m 0770
 mount -o uid=1000,gid=1000 -t functionfs adb /dev/usb-ffs/adb
-sdbd -df /var/log/sdbd.log
+sdbd -ds
 
 # start usb gadget
 sleep 1

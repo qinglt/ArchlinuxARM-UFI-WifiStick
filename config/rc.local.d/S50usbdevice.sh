@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
+
 . /etc/profile
+export SHELL="/bin/bash"
+export TERM="xterm-256color"
+cd /root
 
 USB_ATTRIBUTE=0x409
 USB_GROUP=alarm
@@ -13,19 +17,25 @@ USB_FUNCTIONS_DIR=${USB_CONFIGFS_DIR}/functions
 USB_CONFIGS_DIR=${USB_CONFIGFS_DIR}/configs/${USB_SKELETON}
 USB_FUNCTIONS_CNT=1
 
-function configfs_init() {
+configfs_init() {
 	mkdir -p /dev/usb-ffs
 	mount -t configfs none ${CONFIGFS_DIR}
 
 	mkdir -p ${USB_CONFIGFS_DIR} -m 0770
 	echo 0x2207 > ${USB_CONFIGFS_DIR}/idVendor
+	echo 0x0018 > ${USB_CONFIGFS_DIR}/idProduct
 	echo 0x0310 > ${USB_CONFIGFS_DIR}/bcdDevice
 	echo 0x0200 > ${USB_CONFIGFS_DIR}/bcdUSB
 
 	mkdir -p ${USB_STRINGS_DIR} -m 0770
 	echo "ArchLinux" > ${USB_STRINGS_DIR}/manufacturer
 	echo "MSM8916" > ${USB_STRINGS_DIR}/product
-	echo "0123456789ABCDEF" > ${USB_STRINGS_DIR}/serialnumber
+
+	SERIAL=$(cat /proc/cpuinfo | grep Serial | awk '{print $3}')
+	if [ -z $SERIAL ]; then
+		SERIAL=0123456789ABCDEF
+	fi
+	echo $SERIAL >${USB_STRINGS_DIR}/serialnumber
 
 	mkdir -p ${USB_CONFIGS_DIR} -m 0770
 	mkdir -p ${USB_CONFIGS_DIR}/strings/${USB_ATTRIBUTE} -m 0770
@@ -47,23 +57,37 @@ modprobe libcomposite
 
 # initialize usb configfs
 test -d ${USB_CONFIGFS_DIR} || configfs_init
-echo "0x0018" > ${USB_CONFIGFS_DIR}/idProduct
 
 # adbd function
-syslink_function ffs.adb
-mkdir /dev/usb-ffs/adb -m 0770
-mount -o uid=1000,gid=1000 -t functionfs adb /dev/usb-ffs/adb
-sdbd -ds
+if [ -f /usr/bin/sdbd ]; then
+	syslink_function ffs.adb
+	mkdir /dev/usb-ffs/adb -m 0770
+	mount -o uid=1000,gid=1000 -t functionfs adb /dev/usb-ffs/adb
+	sdbd -dsp /run/sdbd.pid
+fi
 
 # start usb gadget
-sleep 1
 UDC=$(ls /sys/class/udc/ | awk '{print $1}')
 
-nohup bash -c "
-	while true; do
-		if [ \"#\$(cat ${USB_CONFIGFS_DIR}/UDC)\" != \"#$UDC\" ]; then
-			echo $UDC > ${USB_CONFIGFS_DIR}/UDC
+cat << EOF > /run/usbd.sh
+#!/usr/bin/env sh
+echo -1000 >/proc/\$\$/oom_score_adj
+exec 3>/dev/watchdog
+while true; do
+	echo 'S' >&3
+	if [ "#\$(cat ${USB_CONFIGFS_DIR}/UDC)" == "#$UDC" ]; then
+		sleep 1
+		continue
+	fi
+	if [ -f /usr/bin/sdbd ]; then
+		if [ "#\$(cat /proc/\$(cat /run/sdbd.pid)/comm)" != "#sdbd" ]; then
+			sdbd -dsp /run/sdbd.pid
 		fi
-		sleep 0.5
-	done
-" &
+	fi
+	echo $UDC > ${USB_CONFIGFS_DIR}/UDC
+	sleep 0.2
+done
+EOF
+
+chmod +x /run/usbd.sh
+nohup /run/usbd.sh >/dev/null 2>&1 &

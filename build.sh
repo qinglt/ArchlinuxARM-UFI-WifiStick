@@ -93,7 +93,6 @@ function install_url_package()
     local name=$(uuidgen)
     $chlivedo "cd /root && curl -L -o $name $url"
     $chlivedo "cd /root && pacstrap -cGMU /mnt ./$name"
-	$chlivedo "cd /root && git clone https://github.com/McMCCRU/rtl8188gu.git && cd rtl8188gu && make && make install"
 }
 
 function config_rootfs()
